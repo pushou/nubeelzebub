@@ -1,3 +1,4 @@
+# decode base 64 beelzebub output  (echo command)
 def decode-b64-malware [] {
     $in | each { |row|
         let len = ($row.value | str length)
@@ -34,4 +35,3 @@ zcat  beelzebub.json.*.gz
                  | sort-by -r count
                  | tee {save -f base64.json}
                  | decode-b64-malware
-                 | explore
