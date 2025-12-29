@@ -28,3 +28,6 @@ polars open ./json/beel.json --infer-schema 50000|polars group-by User|polars ag
 ## filters command that contains ...
 polars open ./json/beel.json --infer-schema 50000|polars filter ((polars col Command|polars contains "uname|echo|wget|export|ftp|curl"))
 
+
+## direct request 
+cat ./log/beelzebub.json |from json  -o|flatten --all|where Protocol != "SSH"|explore
