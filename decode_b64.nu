@@ -1,5 +1,4 @@
-# decode base 64 beelzebub output  (echo command)
-def decode-b64-malware [] {
+export def decode-b64 [] {
     $in | each { |row|
         let len = ($row.value | str length)
         let mod = ($len mod 4)
@@ -22,16 +21,3 @@ def decode-b64-malware [] {
     } | where ($it.decoded | str length) > 10
 }
 
-zcat  beelzebub.json.*.gz
-                 | from json --objects
-                 | flatten --all
-                 | default "nocom" Command
-                 | where Command != "nocom" and Command != ""
-                 | get Command
-                 | split words  --min-word-length 3
-                 | flatten
-                 | str trim --char  "'"
-                 | uniq -c
-                 | sort-by -r count
-                 | tee {save -f base64.json}
-                 | decode-b64-malware

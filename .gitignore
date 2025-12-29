@@ -1,3 +1,5 @@
 .json
 log
 *.gz
+copy.sh
+json
