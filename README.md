@@ -1,4 +1,5 @@
 # nubeelzebub
+![graph command frequency](img/xan1.png)
 NuShell scripts to analyse beelzebug json outputs
 You must have polars plugin and xan if you want to graph
 Beelzebub json logs must be in ./log in gz format
