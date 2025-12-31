@@ -1,33 +1,20 @@
 # nubeelzebub
 NuShell scripts to analyse beelzebug json outputs
 Beelzebub json logs must be in ./log in gz format
-
+slow contains very slow script without polars (just for me)
 
 ## extract to json (output ./json)
-nu main-beel.nu
-
-## full log view
-open json/beel.json | explore
-
-## frequency diagram
-open beelfreq.json|first 50|to csv|xan hist -R
-
-## read decoded base64 (who begin with echo)
-open json/base64.json
-open json/base64.json|get decoded|less
+source nu main-beel.nu
 
 
-## group-by SourceIP
-polars open ./json/beel.json --infer-schema 50000|polars group-by SourceIp|polars agg {Commandes:(polars col Command|polars unique  --subset [Command]) Users: (polars col User|polars unique)}|polars collect
+# display ssh commands 
+$dfssh | polars into-nu | explore
 
+# display http commands
+$dfhttp | polars into-nu | explore
 
-## group-by User
-polars open ./json/beel.json --infer-schema 50000|polars group-by User|polars agg {Commandes:(polars col Command|polars unique  --subset [Command]) AdresseIP: (polars col SourceIp|polars unique)}|polars collect
+# display download commands
+$download_commands | polars into-nu | explore
 
-
-## filters command that contains ...
-polars open ./json/beel.json --infer-schema 50000|polars filter ((polars col Command|polars contains "uname|echo|wget|export|ftp|curl"))
-
-
-## direct request 
-cat ./log/beelzebub.json |from json  -o|flatten --all|where Protocol != "SSH"|explore
+# display decoded base 64 commands
+$decoded | polars into-nu | explore
