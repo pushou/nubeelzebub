@@ -1,35 +1,82 @@
+
+Markdown
+
 # nubeelzebub
+
 ![graph command frequency](img/xan1.png)
-NuShell scripts to analyse beelzebug json outputs
-You must have polars plugin and xan if you want to graph
-Beelzebub json logs must be in ./log in gz format
-slow contains very slow script without polars (just for me)
 
-## extract to json (output ./json)
-source nu main-beel.nu
+**Nushell** scripts to analyze [Beelzebub](https://github.com/mariocandela/beelzebub) honeypot JSON outputs.
 
+## 🛠 Prerequisites
 
-# display ssh commands 
+To use these scripts, you must have the following installed and configured:
+
+* **Nushell** with the `polars` plugin activated.
+* **[Xan](https://github.com/medialab/xan)** for terminal-based graphing.
+* Beelzebub JSON logs stored in `./log` in `.gz` format.
+
+> [!IMPORTANT]
+> The `slow` directory contains legacy scripts without Polars support. These are deprecated and significantly slower.
+
+---
+
+## 🚀 Usage
+
+### 1. Extract to JSON
+Generate processed outputs in the `./json` directory:
+```nushell
+source main-beel.nu
+
+2. Data Exploration
+
+Use these commands to interactively browse the captured logs:
+Extrait de code
+
+# Display SSH commands
 $dfssh | polars into-nu | explore
 
-# display http commands
+# Display HTTP commands
 $dfhttp | polars into-nu | explore
 
-# display download commands
+# Display download commands
 $download_commands | polars into-nu | explore
 
-# display decoded base 64 commands
+# Display decoded Base64 commands
 $decoded | polars into-nu | explore
 
-# split commands in small chunk and graph with xan
+📊 Analytics & Visualization
+Most Used Commands
+
+Extract the top 50 SSH commands and display a frequency histogram in the terminal.
+Extrait de code
 
 $dfssh
-        | polars get Command
-        | polars select (polars col Command|polars str-split " "|polars explode)
-        | polars value-counts
-        | polars into-nu
-        | str trim --char  "'"
-        | sort-by -r  count 
-        | first 50
-        | to csv --columns [value count]
-        | xan hist  -R
+    | polars get Command
+    | polars filter ((polars col Command) != '')
+    | polars rename Command value
+    | polars value-counts
+    | polars into-nu
+    | str trim --char "'"
+    | sort-by -r count
+    | first 50
+    | to csv
+    | xan hist -R
+
+Keyword Frequency Analysis
+
+Split commands into individual words and filter by length to identify common malicious binaries or flags.
+Extrait de code
+
+$dfssh
+    | polars get Command
+    | polars select (polars col Command | polars str-split " " | polars explode)
+    | polars rename Command value
+    | polars filter ((polars col value) != '')
+    | polars filter ((polars col value | polars str-lengths) > 3)
+    | polars value-counts
+    | polars into-nu
+    | str trim --char "'"
+    | sort-by -r count
+    | first 50
+    | to csv
+    | xan hist -R
