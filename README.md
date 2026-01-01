@@ -29,7 +29,7 @@ source main-beel.nu
 2. Data Exploration
 
 Use these commands to interactively browse the captured logs:
-Extrait de code
+
 
 # Display SSH commands
 $dfssh | polars into-nu | explore
@@ -48,7 +48,6 @@ Most Used Commands
 
 Extract the top 50 SSH commands and display a frequency histogram in the terminal.
 Extrait de code
-
 $dfssh
     | polars get Command
     | polars filter ((polars col Command) != '')
