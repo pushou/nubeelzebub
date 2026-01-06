@@ -16,6 +16,7 @@ To use these scripts, you must have the following installed and configured:
 
 > [!IMPORTANT]
 > The `slow` directory contains legacy scripts without Polars support. These are deprecated and significantly slower.
+>  main_beel-variant.nu is a variant scripts (polars open command support to read  "shell expansion" and gz file)
 
 ---
 
@@ -41,7 +42,7 @@ $dfhttp | polars into-nu | explore
 $download_commands | polars into-nu | explore
 
 # Display decoded Base64 commands
-$decoded | polars into-nu | explore
+$decoded 
 
 📊 Analytics & Visualization
 Most Used Commands
