@@ -79,3 +79,7 @@ $dfssh
     | first 50
     | to csv
     | xan hist -R
+
+## docker honeypot
+$dfhttp | polars into-nu |get RequestURI|split column "path="|get column0|uniq -c|sort-by -r count|first 15
+$dfhttp | polars into-nu |get RequestURI|split column "path="|get column0|uniq -c|sort-by -r count|where value =~ "create|exec"
