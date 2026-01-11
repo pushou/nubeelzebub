@@ -44,6 +44,9 @@ $download_commands | polars into-nu | explore
 # Display decoded Base64 commands
 $decoded 
 
+# display downloaded urls
+$urls
+
 📊 Analytics & Visualization
 Most Used Commands
 

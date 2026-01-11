@@ -21,8 +21,20 @@ let df_http = $filelist
 let dfssh = $df_ssh |reduce {|it,acc| $it | polars concat $acc }|polars collect
 let dfhttp = $df_http |reduce {|it,acc| $it | polars concat $acc }|polars collect
 
-let download_commands = $dfssh |polars filter (polars col Command|polars contains "uname|wget|export|ftp|curl")|polars get Command|polars unique|polars collect
+let download_commands = $dfssh 
+                        | polars filter (polars col Command
+                        | polars contains "uname|wget|export|ftp|curl")
+                        | polars get Command
+                        | polars unique
+                        | polars collect
 
+let urls = $dfssh 
+           | polars get Command
+           | polars select (polars col Command|polars str-split " "|polars explode)
+           | polars value-counts
+           | polars filter ((polars col Command) |polars contains "http://|https://|ftp://|tftp://")
+           | polars into-nu
+           | sort-by -r count
 
 let decoded = $dfssh |polars get Command|polars select (polars col Command|polars str-split " "|polars explode)|polars value-counts|polars into-nu
                   | flatten

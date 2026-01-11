@@ -18,6 +18,14 @@ let dfhttp = $df_http |polars collect
 
 let download_commands = $df_ssh |polars filter (polars col Command|polars contains "uname|wget|export|ftp|curl")|polars get Command|polars unique|polars collect
 
+let urls = $dfssh
+           | polars get Command
+           | polars select (polars col Command|polars str-split " "|polars explode)
+           | polars value-counts
+           | polars filter ((polars col Command) |polars contains "http://|https://|ftp://|tftp://")
+           | polars into-nu
+           | sort-by -r count
+
 
 let decoded = $df_ssh |polars get Command|polars select (polars col Command|polars str-split " "|polars explode)|polars value-counts|polars into-nu
                   | flatten
