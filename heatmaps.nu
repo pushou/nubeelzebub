@@ -25,18 +25,27 @@ if not ($CSV | path exists) {
   print $"[INFO] $CSV régénéré depuis $PARQ"
 }
 
+# ── Helper : matrice cross-tab col1 × col2 limitée au top-N col1 ──
+def cross_view [col1: string, col2: string, n: int, name: string, title: string] {
+  # top-N valeurs de col1 par nombre d'événements
+  let top = (xan groupby $col1 "count() as n" $CSV | xan top n -l $n | xan select $col1 | lines | skip 1 | str trim)
+
+  # filtre le CSV : col1 dans le top et col2 non vide
+  let filtered = ($OUT + "/" + $name + "_filtered.csv")
+  open $CSV
+  | where {|r| (($r | get $col1) in $top) and (($r | get $col2 | into string | str trim) != "")}
+  | to csv | save -f $filtered
+
+  let out = ($OUT + "/" + $name + "_matrix.csv")
+  xan matrix count $col1 $col2 $filtered | save -f $out
+
+  print ("\n===== " + $title + " (top " + ($n | into string) + ") =====")
+  print "(xan matrix count " + $col1 + " " + $col2 + ") | xan heatmap -S 4 -N --gradient viridis --normalize col"
+  xan heatmap -S 4 -N --gradient viridis --normalize col $out
+}
+
 # ── 1. Matrice top attaquants × ports (comptage) ────────────────
-# colonnes de attacks.csv : 1=DateTime 2=SourceIp 5=Port
-xan groupby SourceIp "count() as n" $CSV | xan top n -l 15 | xan select SourceIp | lines | skip 1 | save -f ($OUT + "/top15.txt")
-
-# filtre les top IPs et garde (SourceIp, Port)
-awk -F, '
-  NR==FNR { if (FNR>1) top[$1]=1; next }
-  FNR==1  { print "SourceIp,Port"; next }
-  { if (($2 in top) && ($2 != "")) print $2 "," $5 }
-' ($OUT + "/top15.txt") $CSV | save -f ($OUT + "/ip_port.csv")
-
-xan matrix count SourceIp Port ($OUT + "/ip_port.csv") | save -f ($OUT + "/ipxport_matrix.csv")
+cross_view SourceIp Port 15 "ipxport" "HEATMAP 1 : TOP ATTAQUANTS × PORTS"
 
 # ── 2. Features par IP + matrice de corrélation ─────────────────
 nu -c 'let e = (open json/charts/attacks.csv | where SourceIp != "" | group-by SourceIp | items {|k,v| {ip: $k, n_events: ($v|length)}});
@@ -50,13 +59,12 @@ $e | join $p ip -l | join $c ip -l | join $m ip -l | join $h ip -l | each {|r|
 
 xan select n_events,n_ports,n_cmds,n_methods,n_honeypots ($OUT + "/features_per_ip.csv") | xan matrix corr | save -f ($OUT + "/corr.csv")
 
-# ── 3. Rendu heatmaps (interactif) ──────────────────────────────
-print "\n===== HEATMAP 1 : TOP ATTAQUANTS × PORTS (comptage) ====="
-print "xan matrix count SourceIp Port ip_port.csv | xan heatmap -S 4 -N --gradient viridis --normalize col"
-xan heatmap -S 4 -N --gradient viridis --normalize col ($OUT + "/ipxport_matrix.csv")
-
 print "\n===== HEATMAP 2 : CORRÉLATION FEATURES PAR IP (diverging) ====="
 print "xan matrix corr (features) | xan heatmap -S 5 -N -D"
 xan heatmap -S 5 -N -D ($OUT + "/corr.csv")
+
+# ── 3. Vues cross-tab complémentaires ────────────────────────────
+cross_view SourceIp Honeypot 15 "ipxhoneypot" "HEATMAP 3 : TOP ATTAQUANTS × HONEYPOTS"
+cross_view Honeypot Port 10 "honeypotxport" "HEATMAP 4 : HONEYPOTS × PORTS"
 
 print "\n✅ Terminé — les cellules ne s'affichent qu'en terminal interactif (TTY)."
