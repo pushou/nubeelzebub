@@ -478,11 +478,11 @@ print "  === NOUVEAUX DÉTECTIONS ENHANCED ==="
 print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
 
 print "\n--- ⚠️  COMPROMISSIONS CONFIRMÉES (commandes exécutées) ---"
-print "  ( | length) attaquants ayant execute des commandes"
+print $"  ($confirmed_compromised | length) attaquants ayant exécuté des commandes"
 print ($confirmed_compromised | first 10)
 
 print "\n--- 🎯 Attaquants multicanaux (SSH + HTTP) — RISQUE CRITIQUE ---"
-print "  ( | length) IPs identifiees"
+print $"  ($multi_channel_attackers | length) IPs identifiées"
 if ($multi_channel_attackers | length) > 0 {
     print ($multi_channel_attackers | first 10)
     print "\n  ⚠️  Ces IPs ont attaqué à la fois SSH et HTTP — profil avancé"
