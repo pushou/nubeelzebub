@@ -428,8 +428,22 @@ print "\n═══════════════════════�
 print "  ANALYSE CYBER — BEELZEBUB HONEYPOT (ENHANCED)"
 print "═══════════════════════════════════════════════\n"
 
+# Compteurs précalculés (interpolation robuste)
 let ssh_count = ($dfssh | polars into-nu | length)
 let http_count = ($dfhttp | polars into-nu | length)
+let n_confirmed = ($confirmed_compromised | length)
+let n_dns = ($dns_anomalies | length)
+let n_payloads = ($http_payloads | length)
+let n_cron = ($cron_persistence | length)
+let n_user_mod = ($user_modification | length)
+let n_priv = ($privilege_escalation | length)
+let n_sys_mod = ($system_modification | length)
+let n_recon = ($recon_commands | length)
+let n_multi = ($multi_channel_attackers | length)
+let n_http_only = ($http_only_attackers | length)
+let n_evidence = ($evidence_tampering | length)
+let n_crypto = ($crypto_mining | length)
+
 print $"SSH events: ($ssh_count)"
 print $"HTTP events: ($http_count)"
 print $"LiteLLM honeypot (port 4000): ($litellm_count) events\n"
@@ -443,32 +457,32 @@ print ($dfssh
   | first 10)
 
 print "\n--- COMPROMISSION CONFIRMÉE — IPs ayant exécuté des commandes ---"
-print $"  ($confirmed_compromised | length) IPs identifiées"
+print $"  ($n_confirmed) IPs identifiées"
 print ($confirmed_compromised | first 15)
 
 print "\n--- Score d'intensité par IP (V2 corrigée, top 20) ---"
 print ($attack_scores_v2 | first 20)
 
 print "\n--- Anomalies DNS (SNI vs Host mismatch) ---"
-print $"  ($dns_anomalies | length) anomalies"
+print $"  ($n_dns) anomalies"
 
 print "\n--- Payloads HTTP suspects ---"
-print $"  ($http_payloads | length) payloads"
+print $"  ($n_payloads) payloads"
 
 print "\n--- Persistence détectée (cron) ---"
-print $"  ($cron_persistence | length) events"
+print $"  ($n_cron) events"
 
 print "\n--- Modifications utilisateurs ---"
-print $"  ($user_modification | length) events"
+print $"  ($n_user_mod) events"
 
 print "\n--- Privilege escalation ---"
-print $"  ($privilege_escalation | length) events"
+print $"  ($n_priv) events"
 
 print "\n--- Modifications système (passwd/shadow/sudoers) ---"
-print $"  ($system_modification | length) events"
+print $"  ($n_sys_mod) events"
 
 print "\n--- Reconnaissance système ---"
-print $"  ($recon_commands | length) events"
+print $"  ($n_recon) events"
 
 # ═══════════════════════════════════════════════
 # NOUVEAUX RÉSULTATS AMÉLIORÉS
@@ -478,29 +492,29 @@ print "  === NOUVEAUX DÉTECTIONS ENHANCED ==="
 print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
 
 print "\n--- ⚠️  COMPROMISSIONS CONFIRMÉES (commandes exécutées) ---"
-print $"  ($confirmed_compromised | length) attaquants ayant exécuté des commandes"
+print $"  ($n_confirmed) attaquants ayant exécuté des commandes"
 print ($confirmed_compromised | first 10)
 
 print "\n--- 🎯 Attaquants multicanaux (SSH + HTTP) — RISQUE CRITIQUE ---"
-print $"  ($multi_channel_attackers | length) IPs identifiées"
-if ($multi_channel_attackers | length) > 0 {
+print $"  ($n_multi) IPs identifiées"
+if $n_multi > 0 {
     print ($multi_channel_attackers | first 10)
     print "\n  ⚠️  Ces IPs ont attaqué à la fois SSH et HTTP — profil avancé"
 }
 
 print "\n--- 🔍 Scanners HTTP-only (pas d'SSH) ---"
-print $"  ($http_only_attackers | length) IPs"
+print $"  ($n_http_only) IPs"
 print ($http_only_attackers | first 10)
 
 print "\n--- 🚨 Destruction de preuves détectée ---"
-print $"  ($evidence_tampering | length) tentatives"
-if ($evidence_tampering | length) > 0 {
+print $"  ($n_evidence) tentatives"
+if $n_evidence > 0 {
     print $evidence_tampering
 }
 
 print "\n--- ⛏️  Cryptomining détecté ---"
-print $"  ($crypto_mining | length) tentatives"
-if ($crypto_mining | length) > 0 {
+print $"  ($n_crypto) tentatives"
+if $n_crypto > 0 {
     print $crypto_mining
 }
 
