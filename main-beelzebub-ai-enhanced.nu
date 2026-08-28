@@ -111,12 +111,105 @@ let litellm_timeline = if $litellm_count > 0 {
 let litellm_events = $litellm_table
 
 # ──────────────────────────────────────────────
-# 2. Commandes de téléchargement — regex améliorée
+# 1c. Stat par type d'honeypot (HTTP ventilé par port)
+#      SSH  |  HTTP/Web:80  |  LiteLLM:4000  |  Docker:2375  |  Ollama:11434
 # ──────────────────────────────────────────────
-let download_commands = ($dfssh
-  | polars filter (polars col Command | polars contains "\\b(wget|curl|ftp|tftp)\\b")
+let honeypot_names = {
+  "22":    "SSH"
+  "80":    "HTTP/Web (WordPress)"
+  "4000":  "LiteLLM Proxy"
+  "2375":  "Docker Remote API"
+  "11434": "Ollama"
+  "27017": "MongoDB"
+}
+
+let honeypot_stats = (
+  # Événements HTTP → identifier le port d'écoute depuis HostHTTPRequest
+  ($dfhttp | polars into-nu
+    | each { |r|
+        let hst = ($r.HostHTTPRequest | str trim)
+        let port = (if ($hst | str contains ":") { ($hst | split row ":" | last | str trim) } else { "80" })
+        { Honeypot: "HTTP", Port: $port, SourceIp: $r.SourceIp, DateTime: $r.DateTime }
+      })
+  # + événements SSH
+  | append ($dfssh | polars into-nu | each { |r| { Honeypot: "SSH", Port: "22", SourceIp: $r.SourceIp, DateTime: $r.DateTime } })
+  | group-by {|r| $"($r.Honeypot)::($r.Port)" }
+  | items { |key, rows|
+      let parts = ($key | split row '::')
+      let proto = ($parts | get 0)
+      let port = ($parts | get 1)
+      let known = ($honeypot_names | get -o $port)
+      let name = (if ($known | is-empty) { "HTTP/Web" } else { $known })
+      { Honeypot: $name
+        Protocol: $proto
+        Port: $port
+        Events: ($rows | length)
+        UniqueIPs: ($rows | get SourceIp | uniq | length) }
+    }
+  | sort-by -r Events)
+
+# ═══════════════════════════════════════════════
+# 1d. Export PARQUET — événements d'attaque par honeypot
+#     Colonnes: DateTime, SourceIp, Protocol, Honeypot, Port,
+#     Username, Password, Method, URI, Command, DownloadUri
+# ═══════════════════════════════════════════════
+# Extrait la première URL de téléchargement (wget/curl/tftp) d'une chaîne
+def extract_dl_uri [s: string] {
+  let r = ($s | parse -r '(?<u>https?://[^\s\"<>+)\]&]+)')
+  if ($r | is-empty) { "" } else { ($r | get "u" | first) }
+}
+
+let attacks_parquet_path = "json/attacks_by_honeypot.parquet"
+
+let attacks_by_honeypot = (
+  # Événements SSH : commande + éventuelle URI de téléchargement
+  ($dfssh | polars into-nu | each { |r| {
+      DateTime: $r.DateTime, SourceIp: $r.SourceIp, Protocol: "SSH", Honeypot: "SSH", Port: "22",
+      Username: $r.User, Password: $r.Password, Method: "", URI: "", Command: $r.Command,
+      DownloadUri: (extract_dl_uri $r.Command)
+    }})
+  # Événements HTTP : honeypot déduit du port + URI/Body
+  | append ($dfhttp | polars into-nu | each { |r|
+        let hst = ($r.HostHTTPRequest | str trim)
+        let port = (if ($hst | str contains ":") { ($hst | split row ":" | last | str trim) } else { "80" })
+        let known = ($honeypot_names | get -o $port)
+        let hp = (if ($known | is-empty) { "HTTP/Web" } else { $known })
+        { DateTime: $r.DateTime, SourceIp: $r.SourceIp, Protocol: "HTTP", Honeypot: $hp, Port: $port,
+          Username: "", Password: "", Method: $r.HTTPMethod, URI: $r.RequestURI, Command: "",
+          DownloadUri: (extract_dl_uri $r.Body) }
+      })
+  | polars into-df
+)
+
+$attacks_by_honeypot | polars save --type parquet $attacks_parquet_path
+
+# ──────────────────────────────────────────────
+# 2. Commandes de téléchargement — SSH et HTTP séparés, regex améliorée
+#    (bordures de mots; wget|curl|ftp|tftp, y compris tftp comme commande)
+# ──────────────────────────────────────────────
+let dl_regex = "\\b(wget|curl|ftp|tftp)\\b"
+
+# Téléchargements côté SSH (champ Command des sessions réussies)
+let download_commands_ssh = ($dfssh
+  | polars filter (polars col Command | polars contains $dl_regex)
   | polars select SourceIp Command DateTime
-  | polars into-nu)
+  | polars into-nu
+  | each { |r| { SourceIp: $r.SourceIp, Protocol: "SSH", DateTime: $r.DateTime, Detail: $r.Command } }
+  | sort-by DateTime)
+
+# Téléchargements côté HTTP (RequestURI ou Body)
+let download_commands_http = ($dfhttp
+  | polars filter ((polars col RequestURI | polars contains $dl_regex) or (polars col Body | polars contains $dl_regex))
+  | polars select SourceIp RequestURI Body DateTime
+  | polars into-nu
+  | each { |r|
+      let uri = ($r.RequestURI | default "" | into string | str trim)
+      let detail = if ($uri | str length) > 0 { $uri } else { ($r.Body | default "" | into string | str trim) }
+      { SourceIp: $r.SourceIp, Protocol: "HTTP", DateTime: $r.DateTime, Detail: $detail } }
+  | sort-by DateTime)
+
+# Vue consolidée (conserver pour compatibilité / total)
+let download_commands = ($download_commands_ssh | append $download_commands_http | sort-by DateTime)
 
 # ──────────────────────────────────────────────
 # 3. URLs de C2 (INCHANGÉ)
@@ -127,6 +220,17 @@ let urls = ($dfssh
   | polars value-counts
   | polars filter ((polars col Command) | polars contains "http://|https://|ftp://|tftp://")
   | polars into-nu
+  | sort-by -r count)
+
+# ──────────────────────────────────────────────
+# 3b. Fréquence des commandes exécutées (uniques + count)
+# ──────────────────────────────────────────────
+let command_frequency = ($dfssh
+  | polars select Command
+  | polars filter (polars col Command | polars is-not-null)
+  | polars value-counts
+  | polars into-nu
+  | where ($it.Command | into string | str trim | str length) > 0
   | sort-by -r count)
 
 # ──────────────────────────────────────────────
@@ -164,6 +268,19 @@ let evidence_tampering = ($dfssh
   | polars filter (polars col Command | polars contains "rm -rf|history -c|shred|wipe|srm")
   | polars select SourceIp Command DateTime
   | polars into-nu)
+
+# Group-by commande identique → liste des IPs qui l'ont exécutée
+# (évite de répéter 137 lignes pour ~10 commandes uniques)
+let evidence_tampering_by_cmd = ($evidence_tampering
+  | group-by Command
+  | items { |cmd, rows|
+      let ips = ($rows | get SourceIp | uniq | sort)
+      { Command: $cmd
+        unique_ips: $ips
+        ip_count: ($ips | length)
+        events: ($rows | length) }
+    }
+  | sort-by -r events)
 
 # ═══════════════════════════════════════════════
 # 15. Cryptomining detection (ajout)
@@ -390,6 +507,7 @@ let soc_export = {
     http_events: ($dfhttp | polars into-nu | length)
     litellm_events: ($litellm_events | length)
     litellm_unique_ips: ($litellm_attackers | length)
+    honeypot_by_type: ($honeypot_stats)
     confirmed_compromised_ips: ($confirmed_compromised | length)
     multi_channel_attackers: ($multi_channel_attackers | length)
     dns_anomalies_count: ($dns_anomalies | length)
@@ -408,10 +526,15 @@ let soc_export = {
     timeline: ($litellm_timeline | first 50)
   }
   suspicious_urls_c2: ($urls | first 20)
+  command_frequency: ($command_frequency | first 50)
   dns_anomalies: ($dns_anomalies | first 20)
   http_payloads: ($http_payloads | first 20)
   crypto_mining: ($crypto_mining | first 10)
   evidence_tampering: ($evidence_tampering | first 10)
+  evidence_tampering_by_cmd: ($evidence_tampering_by_cmd)
+  download_commands: ($download_commands | first 30)
+  download_commands_ssh: ($download_commands_ssh | first 30)
+  download_commands_http: ($download_commands_http | first 30)
   first_seen_ips: ($first_seen | first 20)
   password_intelligence: ($password_hashes | first 10)
   http_only_attackers: ($http_only_attackers | first 20)
@@ -420,6 +543,7 @@ let soc_export = {
 $soc_export | save -f json/soc_export.json
 
 print "[INFO] Export JSON SOC/SIEM sauvegardé : json/soc_export.json"
+print $"[INFO] Export PARQUET attaques par honeypot : ($attacks_parquet_path)"
 
 # ═══════════════════════════════════════════════
 # PRINT SUMMARY ENRICHI
@@ -428,25 +552,15 @@ print "\n═══════════════════════�
 print "  ANALYSE CYBER — BEELZEBUB HONEYPOT (ENHANCED)"
 print "═══════════════════════════════════════════════\n"
 
-# Compteurs précalculés (interpolation robuste)
 let ssh_count = ($dfssh | polars into-nu | length)
 let http_count = ($dfhttp | polars into-nu | length)
-let n_confirmed = ($confirmed_compromised | length)
-let n_dns = ($dns_anomalies | length)
-let n_payloads = ($http_payloads | length)
-let n_cron = ($cron_persistence | length)
-let n_user_mod = ($user_modification | length)
-let n_priv = ($privilege_escalation | length)
-let n_sys_mod = ($system_modification | length)
-let n_recon = ($recon_commands | length)
-let n_multi = ($multi_channel_attackers | length)
-let n_http_only = ($http_only_attackers | length)
-let n_evidence = ($evidence_tampering | length)
-let n_crypto = ($crypto_mining | length)
-
 print $"SSH events: ($ssh_count)"
 print $"HTTP events: ($http_count)"
 print $"LiteLLM honeypot (port 4000): ($litellm_count) events\n"
+
+print "\n--- 🏷️  STAT PAR TYPE D'HONEYPOT (HTTP ventilé par port) ---"
+print $"  ($honeypot_stats | length) types"
+print ($honeypot_stats | select Honeypot Protocol Port Events UniqueIPs)
 
 print "--- TOP 10 IPs attaquants (SSH) ---"
 print ($dfssh
@@ -457,32 +571,32 @@ print ($dfssh
   | first 10)
 
 print "\n--- COMPROMISSION CONFIRMÉE — IPs ayant exécuté des commandes ---"
-print $"  ($n_confirmed) IPs identifiées"
+print $"  ($confirmed_compromised | length) IPs identifiées"
 print ($confirmed_compromised | first 15)
 
 print "\n--- Score d'intensité par IP (V2 corrigée, top 20) ---"
 print ($attack_scores_v2 | first 20)
 
 print "\n--- Anomalies DNS (SNI vs Host mismatch) ---"
-print $"  ($n_dns) anomalies"
+print $"  ($dns_anomalies | length) anomalies"
 
 print "\n--- Payloads HTTP suspects ---"
-print $"  ($n_payloads) payloads"
+print $"  ($http_payloads | length) payloads"
 
 print "\n--- Persistence détectée (cron) ---"
-print $"  ($n_cron) events"
+print $"  ($cron_persistence | length) events"
 
 print "\n--- Modifications utilisateurs ---"
-print $"  ($n_user_mod) events"
+print $"  ($user_modification | length) events"
 
 print "\n--- Privilege escalation ---"
-print $"  ($n_priv) events"
+print $"  ($privilege_escalation | length) events"
 
 print "\n--- Modifications système (passwd/shadow/sudoers) ---"
-print $"  ($n_sys_mod) events"
+print $"  ($system_modification | length) events"
 
 print "\n--- Reconnaissance système ---"
-print $"  ($n_recon) events"
+print $"  ($recon_commands | length) events"
 
 # ═══════════════════════════════════════════════
 # NOUVEAUX RÉSULTATS AMÉLIORÉS
@@ -492,29 +606,37 @@ print "  === NOUVEAUX DÉTECTIONS ENHANCED ==="
 print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
 
 print "\n--- ⚠️  COMPROMISSIONS CONFIRMÉES (commandes exécutées) ---"
-print $"  ($n_confirmed) attaquants ayant exécuté des commandes"
+print "  ( | length) attaquants ayant execute des commandes"
 print ($confirmed_compromised | first 10)
 
 print "\n--- 🎯 Attaquants multicanaux (SSH + HTTP) — RISQUE CRITIQUE ---"
-print $"  ($n_multi) IPs identifiées"
-if $n_multi > 0 {
+print "  ( | length) IPs identifiees"
+if ($multi_channel_attackers | length) > 0 {
     print ($multi_channel_attackers | first 10)
     print "\n  ⚠️  Ces IPs ont attaqué à la fois SSH et HTTP — profil avancé"
 }
 
 print "\n--- 🔍 Scanners HTTP-only (pas d'SSH) ---"
-print $"  ($n_http_only) IPs"
+print $"  ($http_only_attackers | length) IPs"
 print ($http_only_attackers | first 10)
 
 print "\n--- 🚨 Destruction de preuves détectée ---"
-print $"  ($n_evidence) tentatives"
-if $n_evidence > 0 {
-    print $evidence_tampering
+print $"  ($evidence_tampering | length) tentatives  |  ($evidence_tampering_by_cmd | length) commandes distinctes"
+if ($evidence_tampering | length) > 0 {
+    print "\n  ← Par commande identique (liste des IPs) →"
+    $evidence_tampering_by_cmd | each { |row|
+        let nips = ($row.ip_count)
+        let nevents = ($row.events)
+        print ""
+        print $"  ▸ COMMANDE: ($nips) IPs uniques, ($nevents) events"
+        print $"      ($row.Command)"
+        print $"      IPs: ($row.unique_ips | str join ', ')"
+    }
 }
 
 print "\n--- ⛏️  Cryptomining détecté ---"
-print $"  ($n_crypto) tentatives"
-if $n_crypto > 0 {
+print $"  ($crypto_mining | length) tentatives"
+if ($crypto_mining | length) > 0 {
     print $crypto_mining
 }
 
@@ -569,11 +691,20 @@ print ($password_analysis_raw | first 10 | select Password count)
 print "\n--- 📊 URLs C2 / Downloaders (top 15) ---"
 print ($urls | first 15)
 
+print "\n--- 🧾 Commandes exécutées (uniques + count, top 20) ---"
+print $"  ($command_frequency | length) commandes uniques"
+print ($command_frequency | first 20)
+
 print "\n--- 🕐 Premières apparitions par IP (top 15) ---"
 print ($first_seen | first 15)
 
-print "\n--- 🔓 Commandes téléchargées (wget/curl/ftp) ---"
-print ($download_commands | first 10)
+print "\n--- 🔓 Téléchargements SSH (wget/curl/ftp/tftp) ---"
+print $"  ($download_commands_ssh | length) events"
+print ($download_commands_ssh | first 10 | select SourceIp DateTime Detail)
+
+print "\n--- 🔓 Téléchargements HTTP (wget/curl/ftp/tftp) ---"
+print $"  ($download_commands_http | length) events"
+print ($download_commands_http | first 10 | select SourceIp DateTime Detail)
 
 print "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 print "  ✅ Export JSON SOC : json/soc_export.json"
