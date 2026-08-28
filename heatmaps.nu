@@ -45,7 +45,7 @@ let c = (open json/charts/attacks.csv | where SourceIp != "" | select SourceIp C
 let m = (open json/charts/attacks.csv | where SourceIp != "" | select SourceIp Method | where Method != "" | uniq | group-by SourceIp | items {|k,v| {ip: $k, n_methods: ($v|length)}});
 let h = (open json/charts/attacks.csv | where SourceIp != "" | select SourceIp Honeypot | uniq | group-by SourceIp | items {|k,v| {ip: $k, n_honeypots: ($v|length)}});
 $e | join $p ip -l | join $c ip -l | join $m ip -l | join $h ip -l | each {|r|
-  { ip: $r.ip, n_events: ($r | get -i n_events | default 0), n_ports: ($r | get -i n_ports | default 0), n_cmds: ($r | get -i n_cmds | default 0), n_methods: ($r | get -i n_methods | default 0), n_honeypots: ($r | get -i n_honeypots | default 0) }
+  { ip: $r.ip, n_events: ($r.n_events? | default 0), n_ports: ($r.n_ports? | default 0), n_cmds: ($r.n_cmds? | default 0), n_methods: ($r.n_methods? | default 0), n_honeypots: ($r.n_honeypots? | default 0) }
 } | to csv' | save -f ($OUT + "/features_per_ip.csv")
 
 xan select n_events,n_ports,n_cmds,n_methods,n_honeypots ($OUT + "/features_per_ip.csv") | xan matrix corr | save -f ($OUT + "/corr.csv")
