@@ -38,7 +38,7 @@ let dfhttp = $filelist
                            | try { polars get event
                                    | polars unnest event
                                    | polars filter ((polars col Protocol) == 'HTTP')
-                                   | polars select DateTime RemoteAddr Protocol SourceIp Headers Cookies UserAgent HostHTTPRequest Body HTTPMethod RequestURI TLSServerName }}
+                                   | polars select DateTime RemoteAddr Protocol SourceIp Headers Cookies UserAgent HostHTTPRequest Body HTTPMethod RequestURI TLSServerName Description }}
                    | reduce {|it, acc| $it | polars concat $acc }
                    | polars collect
 
@@ -112,23 +112,46 @@ let litellm_events = $litellm_table
 
 # ──────────────────────────────────────────────
 # 1c. Stat par type d'honeypot (HTTP ventilé par port)
-#      SSH  |  HTTP/Web:80  |  LiteLLM:4000  |  Docker:2375  |  Ollama:11434
+#     SSH  |  WordPress:80  |  Archive Portal:81  |  LiteLLM:4000
+#     Docker:2375  |  Ollama:11434
 # ──────────────────────────────────────────────
 let honeypot_names = {
   "22":    "SSH"
   "80":    "HTTP/Web (WordPress)"
+  "81":    "Archive Portal (PHP decoy)"
   "4000":  "LiteLLM Proxy"
   "2375":  "Docker Remote API"
   "11434": "Ollama"
   "27017": "MongoDB"
 }
 
+# Port d'écoute déduit du champ Description (handler Beelzebub qui a répondu,
+# autoritaire) puis du HostHTTPRequest si le port y figure, sinon 80.
+# Le Host envoyé par l'attaquant n'est pas fiable : il omet souvent le port
+# (80 implicite) ou indique un port qui n'est pas celui réellement écouté.
+def http_port_of [r] {
+  let d = ($r | get -o Description | default "" | into string)
+  if ($d | str contains "Archive Portal") {
+    "81"
+  } else if ($d | str contains "LiteLLM") {
+    "4000"
+  } else if ($d | str contains "Docker") {
+    "2375"
+  } else if ($d | str contains "Ollama") {
+    "11434"
+  } else if ($d | str contains "WordPress") {
+    "80"
+  } else {
+    let hst = ($r | get -o HostHTTPRequest | default "" | into string | str trim)
+    if ($hst | str contains ":") { ($hst | split row ":" | last | str trim) } else { "80" }
+  }
+}
+
 let honeypot_stats = (
-  # Événements HTTP → identifier le port d'écoute depuis HostHTTPRequest
+  # Événements HTTP → port d'écoute via http_port_of (Description/Host)
   ($dfhttp | polars into-nu
     | each { |r|
-        let hst = ($r.HostHTTPRequest | str trim)
-        let port = (if ($hst | str contains ":") { ($hst | split row ":" | last | str trim) } else { "80" })
+        let port = (http_port_of $r)
         { Honeypot: "HTTP", Port: $port, SourceIp: $r.SourceIp, DateTime: $r.DateTime }
       })
   # + événements SSH
@@ -170,8 +193,7 @@ let attacks_by_honeypot = (
     }})
   # Événements HTTP : honeypot déduit du port + URI/Body
   | append ($dfhttp | polars into-nu | each { |r|
-        let hst = ($r.HostHTTPRequest | str trim)
-        let port = (if ($hst | str contains ":") { ($hst | split row ":" | last | str trim) } else { "80" })
+        let port = (http_port_of $r)
         let known = ($honeypot_names | get -o $port)
         let hp = (if ($known | is-empty) { "HTTP/Web" } else { $known })
         { DateTime: $r.DateTime, SourceIp: $r.SourceIp, Protocol: "HTTP", Honeypot: $hp, Port: $port,
